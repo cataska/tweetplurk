@@ -10,6 +10,14 @@ import myjaiku
 import myurl
 import birth
 
+_qualifiers = { 'zh-TW': ('', '愛', '喜歡', '推', '給', '討厭', '想要', '希望',
+                          '需要', '打算', '希望', '問', '已經', '曾經', '好奇', '覺得', '想', '說', '正在')
+}
+
+def plurkish_message(msg, qualifier_idx):
+    message = _qualifiers['zh-TW'][qualifier_idx] + msg
+    return message
+
 def main():
     usage = """usage: tweeplurk.py [options] message [qualifier_idx]
 Qualifiers:
@@ -46,6 +54,9 @@ Qualifiers:
         message_general, message_plurk = myurl.httpurl_simplify(message[2:], False)
     else:
         message_general = message_plurk = message
+
+    if qualifier_idx != 0:
+        message_general = plurkish_message(message, qualifier_idx)
 
     # Testing mode
     if options.testing:
