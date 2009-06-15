@@ -56,7 +56,7 @@ Qualifiers:
         message_general = message_plurk = message
 
     if qualifier_idx != 0:
-        message_general = plurkish_message(message, qualifier_idx)
+        message_general = plurkish_message(message_general, qualifier_idx)
 
     # Testing mode
     if options.testing:
