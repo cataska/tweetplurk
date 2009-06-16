@@ -15,6 +15,8 @@ _qualifiers = { 'zh-TW': ('', '愛', '喜歡', '推', '給', '討厭', '想要',
 }
 
 def plurkish_message(msg, qualifier_idx):
+    if msg.startswith('http://'):
+        msg = ' ' + msg
     message = _qualifiers['zh-TW'][qualifier_idx] + msg
     return message
 
