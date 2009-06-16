@@ -62,7 +62,8 @@ Qualifiers:
 
     # Testing mode
     if options.testing:
-        print message_general, message_plurk, qualifier_idx
+        print "General:", message_general
+        print "Plurk:", message_plurk, qualifier_idx
         sys.exit(1)
 
     try:
