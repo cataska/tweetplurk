@@ -1,28 +1,58 @@
-#!/usr/bin/python
+#!/usr/bin/python2.4
 #
 # Copyright 2007 Google Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 '''A library that provides a python interface to the Twitter API'''
 
 __author__ = 'dewitt@google.com'
-__version__ = '0.6-devel'
+__version__ = '0.7-devel'
 
 
 import base64
-import md5
+import calendar
+import httplib
 import os
+import rfc822
 import simplejson
 import sys
 import tempfile
+import textwrap
 import time
-import calendar
 import urllib
 import urllib2
 import urlparse
-import twitter
+
+try:
+  from hashlib import md5
+except ImportError:
+  from md5 import md5
+
+
+CHARACTER_LIMIT = 140
+
+# A singleton representing a lazily instantiated FileCache.
+DEFAULT_CACHE = object()
+
 
 class TwitterError(Exception):
   '''Base class for Twitter errors'''
+  
+  @property
+  def message(self):
+    '''Returns the first argument used to construct this error.'''
+    return self.args[0]
 
 
 class Status(object):
@@ -33,6 +63,11 @@ class Status(object):
     status.created_at
     status.created_at_in_seconds # read only
     status.favorited
+    status.in_reply_to_screen_name
+    status.in_reply_to_user_id
+    status.in_reply_to_status_id
+    status.truncated
+    status.source
     status.id
     status.text
     status.relative_created_at # read only
@@ -44,6 +79,11 @@ class Status(object):
                id=None,
                text=None,
                user=None,
+               in_reply_to_screen_name=None,
+               in_reply_to_user_id=None,
+               in_reply_to_status_id=None,
+               truncated=None,
+               source=None,
                now=None):
     '''An object to hold a Twitter status message.
 
@@ -71,6 +111,11 @@ class Status(object):
     self.text = text
     self.user = user
     self.now = now
+    self.in_reply_to_screen_name = in_reply_to_screen_name
+    self.in_reply_to_user_id = in_reply_to_user_id
+    self.in_reply_to_status_id = in_reply_to_status_id
+    self.truncated = truncated
+    self.source = source
 
   def GetCreatedAt(self):
     '''Get the time this status message was posted.
@@ -97,7 +142,7 @@ class Status(object):
     Returns:
       The time this status message was posted, in seconds since the epoch.
     '''
-    return calendar.timegm(time.strptime(self.created_at, '%a %b %d %H:%M:%S +0000 %Y'))
+    return calendar.timegm(rfc822.parsedate(self.created_at))
 
   created_at_in_seconds = property(GetCreatedAtInSeconds,
                                    doc="The time this status message was "
@@ -141,6 +186,51 @@ class Status(object):
   id = property(GetId, SetId,
                 doc='The unique id of this status message.')
 
+  def GetInReplyToScreenName(self):
+    return self._in_reply_to_screen_name
+
+  def SetInReplyToScreenName(self, in_reply_to_screen_name):
+    self._in_reply_to_screen_name = in_reply_to_screen_name
+
+  in_reply_to_screen_name = property(GetInReplyToScreenName, SetInReplyToScreenName,
+                doc='')
+
+  def GetInReplyToUserId(self):
+    return self._in_reply_to_user_id
+
+  def SetInReplyToUserId(self, in_reply_to_user_id):
+    self._in_reply_to_user_id = in_reply_to_user_id
+
+  in_reply_to_user_id = property(GetInReplyToUserId, SetInReplyToUserId,
+                doc='')
+
+  def GetInReplyToStatusId(self):
+    return self._in_reply_to_status_id
+
+  def SetInReplyToStatusId(self, in_reply_to_status_id):
+    self._in_reply_to_status_id = in_reply_to_status_id
+
+  in_reply_to_status_id = property(GetInReplyToStatusId, SetInReplyToStatusId,
+                doc='')
+
+  def GetTruncated(self):
+    return self._truncated
+
+  def SetTruncated(self, truncated):
+    self._truncated = truncated
+
+  truncated = property(GetTruncated, SetTruncated,
+                doc='')
+
+  def GetSource(self):
+    return self._source
+
+  def SetSource(self, source):
+    self._source = source
+
+  source = property(GetSource, SetSource,
+                doc='')
+
   def GetText(self):
     '''Get the text of this status message.
 
@@ -167,7 +257,7 @@ class Status(object):
       A human readable string representing the posting time
     '''
     fudge = 1.25
-    delta  = int(self.now) - int(self.created_at_in_seconds)
+    delta  = long(self.now) - long(self.created_at_in_seconds)
 
     if delta < (1 * fudge):
       return 'about a second ago'
@@ -248,7 +338,13 @@ class Status(object):
              self.created_at == other.created_at and \
              self.id == other.id and \
              self.text == other.text and \
-             self.user == other.user
+             self.user == other.user and \
+             self.in_reply_to_screen_name == other.in_reply_to_screen_name and \
+             self.in_reply_to_user_id == other.in_reply_to_user_id and \
+             self.in_reply_to_status_id == other.in_reply_to_status_id and \
+             self.truncated == other.truncated and \
+             self.favorited == other.favorited and \
+             self.source == other.source
     except AttributeError:
       return False
 
@@ -289,6 +385,18 @@ class Status(object):
       data['text'] = self.text
     if self.user:
       data['user'] = self.user.AsDict()
+    if self.in_reply_to_screen_name:
+      data['in_reply_to_screen_name'] = self.in_reply_to_screen_name
+    if self.in_reply_to_user_id:
+      data['in_reply_to_user_id'] = self.in_reply_to_user_id
+    if self.in_reply_to_status_id:
+      data['in_reply_to_status_id'] = self.in_reply_to_status_id
+    if self.truncated is not None:
+      data['truncated'] = self.truncated
+    if self.favorited is not None:
+      data['favorited'] = self.favorited
+    if self.source:
+      data['source'] = self.source
     return data
 
   @staticmethod
@@ -308,6 +416,11 @@ class Status(object):
                   favorited=data.get('favorited', None),
                   id=data.get('id', None),
                   text=data.get('text', None),
+                  in_reply_to_screen_name=data.get('in_reply_to_screen_name', None),
+                  in_reply_to_user_id=data.get('in_reply_to_user_id', None),
+                  in_reply_to_status_id=data.get('in_reply_to_status_id', None),
+                  truncated=data.get('truncated', None),
+                  source=data.get('source', None),
                   user=user)
 
 
@@ -322,8 +435,21 @@ class User(object):
     user.location
     user.description
     user.profile_image_url
+    user.profile_background_tile
+    user.profile_background_image_url
+    user.profile_sidebar_fill_color
+    user.profile_background_color
+    user.profile_link_color
+    user.profile_text_color
+    user.protected
+    user.utc_offset
+    user.time_zone
     user.url
     user.status
+    user.statuses_count
+    user.followers_count
+    user.friends_count
+    user.favourites_count
   '''
   def __init__(self,
                id=None,
@@ -332,6 +458,19 @@ class User(object):
                location=None,
                description=None,
                profile_image_url=None,
+               profile_background_tile=None,
+               profile_background_image_url=None,
+               profile_sidebar_fill_color=None,
+               profile_background_color=None,
+               profile_link_color=None,
+               profile_text_color=None,
+               protected=None,
+               utc_offset=None,
+               time_zone=None,
+               followers_count=None,
+               friends_count=None,
+               statuses_count=None,
+               favourites_count=None,
                url=None,
                status=None):
     self.id = id
@@ -340,6 +479,19 @@ class User(object):
     self.location = location
     self.description = description
     self.profile_image_url = profile_image_url
+    self.profile_background_tile = profile_background_tile
+    self.profile_background_image_url = profile_background_image_url
+    self.profile_sidebar_fill_color = profile_sidebar_fill_color
+    self.profile_background_color = profile_background_color
+    self.profile_link_color = profile_link_color
+    self.profile_text_color = profile_text_color
+    self.protected = protected
+    self.utc_offset = utc_offset
+    self.time_zone = time_zone
+    self.followers_count = followers_count
+    self.friends_count = friends_count
+    self.statuses_count = statuses_count
+    self.favourites_count = favourites_count
     self.url = url
     self.status = status
 
@@ -477,6 +629,100 @@ class User(object):
   profile_image_url= property(GetProfileImageUrl, SetProfileImageUrl,
                               doc='The url of the thumbnail of this user.')
 
+  def GetProfileBackgroundTile(self):
+    '''Boolean for whether to tile the profile background image.
+
+    Returns:
+      True if the background is to be tiled, False if not, None if unset.
+    '''
+    return self._profile_background_tile
+
+  def SetProfileBackgroundTile(self, profile_background_tile):
+    '''Set the boolean flag for whether to tile the profile background image.
+
+    Args:
+      profile_background_tile: Boolean flag for whether to tile or not.
+    '''
+    self._profile_background_tile = profile_background_tile
+
+  profile_background_tile = property(GetProfileBackgroundTile, SetProfileBackgroundTile,
+                                     doc='Boolean for whether to tile the background image.')
+
+  def GetProfileBackgroundImageUrl(self):
+    return self._profile_background_image_url
+
+  def SetProfileBackgroundImageUrl(self, profile_background_image_url):
+    self._profile_background_image_url = profile_background_image_url
+
+  profile_background_image_url = property(GetProfileBackgroundImageUrl, SetProfileBackgroundImageUrl,
+                                          doc='The url of the profile background of this user.')
+
+  def GetProfileSidebarFillColor(self):
+    return self._profile_sidebar_fill_color
+
+  def SetProfileSidebarFillColor(self, profile_sidebar_fill_color):
+    self._profile_sidebar_fill_color = profile_sidebar_fill_color
+
+  profile_sidebar_fill_color = property(GetProfileSidebarFillColor, SetProfileSidebarFillColor)
+
+  def GetProfileBackgroundColor(self):
+    return self._profile_background_color
+
+  def SetProfileBackgroundColor(self, profile_background_color):
+    self._profile_background_color = profile_background_color
+
+  profile_background_color = property(GetProfileBackgroundColor, SetProfileBackgroundColor)
+
+  def GetProfileLinkColor(self):
+    return self._profile_link_color
+
+  def SetProfileLinkColor(self, profile_link_color):
+    self._profile_link_color = profile_link_color
+
+  profile_link_color = property(GetProfileLinkColor, SetProfileLinkColor)
+
+  def GetProfileTextColor(self):
+    return self._profile_text_color
+
+  def SetProfileTextColor(self, profile_text_color):
+    self._profile_text_color = profile_text_color
+
+  profile_text_color = property(GetProfileTextColor, SetProfileTextColor)
+
+  def GetProtected(self):
+    return self._protected
+
+  def SetProtected(self, protected):
+    self._protected = protected
+
+  protected = property(GetProtected, SetProtected)
+
+  def GetUtcOffset(self):
+    return self._utc_offset
+
+  def SetUtcOffset(self, utc_offset):
+    self._utc_offset = utc_offset
+
+  utc_offset = property(GetUtcOffset, SetUtcOffset)
+
+  def GetTimeZone(self):
+    '''Returns the current time zone string for the user.
+
+    Returns:
+      The descriptive time zone string for the user.
+    '''
+    return self._time_zone
+
+  def SetTimeZone(self, time_zone):
+    '''Sets the user's time zone string.
+
+    Args:
+      time_zone: The descriptive time zone to assign for the user.
+    '''
+    self._time_zone = time_zone
+
+  time_zone = property(GetTimeZone, SetTimeZone)
+
   def GetStatus(self):
     '''Get the latest twitter.Status of this user.
 
@@ -496,6 +742,82 @@ class User(object):
   status = property(GetStatus, SetStatus,
                   doc='The latest twitter.Status of this user.')
 
+  def GetFriendsCount(self):
+    '''Get the friend count for this user.
+    
+    Returns:
+      The number of users this user has befriended.
+    '''
+    return self._friends_count
+
+  def SetFriendsCount(self, count):
+    '''Set the friend count for this user.
+
+    Args:
+      count: The number of users this user has befriended.
+    '''
+    self._friends_count = count
+
+  friends_count = property(GetFriendsCount, SetFriendsCount,
+                  doc='The number of friends for this user.')
+
+  def GetFollowersCount(self):
+    '''Get the follower count for this user.
+    
+    Returns:
+      The number of users following this user.
+    '''
+    return self._followers_count
+
+  def SetFollowersCount(self, count):
+    '''Set the follower count for this user.
+
+    Args:
+      count: The number of users following this user.
+    '''
+    self._followers_count = count
+
+  followers_count = property(GetFollowersCount, SetFollowersCount,
+                  doc='The number of users following this user.')
+
+  def GetStatusesCount(self):
+    '''Get the number of status updates for this user.
+    
+    Returns:
+      The number of status updates for this user.
+    '''
+    return self._statuses_count
+
+  def SetStatusesCount(self, count):
+    '''Set the status update count for this user.
+
+    Args:
+      count: The number of updates for this user.
+    '''
+    self._statuses_count = count
+
+  statuses_count = property(GetStatusesCount, SetStatusesCount,
+                  doc='The number of updates for this user.')
+
+  def GetFavouritesCount(self):
+    '''Get the number of favourites for this user.
+    
+    Returns:
+      The number of favourites for this user.
+    '''
+    return self._favourites_count
+
+  def SetFavouritesCount(self, count):
+    '''Set the favourite count for this user.
+
+    Args:
+      count: The number of favourites for this user.
+    '''
+    self._favourites_count = count
+
+  favourites_count = property(GetFavouritesCount, SetFavouritesCount,
+                  doc='The number of favourites for this user.')
+
   def __ne__(self, other):
     return not self.__eq__(other)
 
@@ -508,7 +830,20 @@ class User(object):
              self.location == other.location and \
              self.description == other.description and \
              self.profile_image_url == other.profile_image_url and \
+             self.profile_background_tile == other.profile_background_tile and \
+             self.profile_background_image_url == other.profile_background_image_url and \
+             self.profile_sidebar_fill_color == other.profile_sidebar_fill_color and \
+             self.profile_background_color == other.profile_background_color and \
+             self.profile_link_color == other.profile_link_color and \
+             self.profile_text_color == other.profile_text_color and \
+             self.protected == other.protected and \
+             self.utc_offset == other.utc_offset and \
+             self.time_zone == other.time_zone and \
              self.url == other.url and \
+             self.statuses_count == other.statuses_count and \
+             self.followers_count == other.followers_count and \
+             self.favourites_count == other.favourites_count and \
+             self.friends_count == other.friends_count and \
              self.status == other.status
     except AttributeError:
       return False
@@ -552,10 +887,34 @@ class User(object):
       data['description'] = self.description
     if self.profile_image_url:
       data['profile_image_url'] = self.profile_image_url
+    if self.profile_background_tile is not None:
+      data['profile_background_tile'] = self.profile_background_tile
+    if self.profile_background_image_url:
+      data['profile_sidebar_fill_color'] = self.profile_background_image_url
+    if self.profile_background_color:
+      data['profile_background_color'] = self.profile_background_color
+    if self.profile_link_color:
+      data['profile_link_color'] = self.profile_link_color
+    if self.profile_text_color:
+      data['profile_text_color'] = self.profile_text_color
+    if self.protected is not None:
+      data['protected'] = self.protected
+    if self.utc_offset:
+      data['utc_offset'] = self.utc_offset
+    if self.time_zone:
+      data['time_zone'] = self.time_zone
     if self.url:
       data['url'] = self.url
     if self.status:
       data['status'] = self.status.AsDict()
+    if self.friends_count:
+      data['friends_count'] = self.friends_count
+    if self.followers_count:
+      data['followers_count'] = self.followers_count
+    if self.statuses_count:
+      data['statuses_count'] = self.statuses_count
+    if self.favourites_count:
+      data['favourites_count'] = self.favourites_count
     return data
 
   @staticmethod
@@ -576,7 +935,20 @@ class User(object):
                 screen_name=data.get('screen_name', None),
                 location=data.get('location', None),
                 description=data.get('description', None),
+                statuses_count=data.get('statuses_count', None),
+                followers_count=data.get('followers_count', None),
+                favourites_count=data.get('favourites_count', None),
+                friends_count=data.get('friends_count', None),
                 profile_image_url=data.get('profile_image_url', None),
+                profile_background_tile = data.get('profile_background_tile', None),
+                profile_background_image_url = data.get('profile_background_image_url', None),
+                profile_sidebar_fill_color = data.get('profile_sidebar_fill_color', None),
+                profile_background_color = data.get('profile_background_color', None),
+                profile_link_color = data.get('profile_link_color', None),
+                profile_text_color = data.get('profile_text_color', None),
+                protected = data.get('protected', None),
+                utc_offset = data.get('utc_offset', None),
+                time_zone = data.get('time_zone', None),
                 url=data.get('url', None),
                 status=status)
 
@@ -671,7 +1043,7 @@ class DirectMessage(object):
     Returns:
       The time this direct message was posted, in seconds since the epoch.
     '''
-    return calendar.timegm(time.strptime(self.created_at, '%a %b %d %H:%M:%S +0000 %Y'))
+    return calendar.timegm(rfc822.parsedate(self.created_at))
 
   created_at_in_seconds = property(GetCreatedAtInSeconds,
                                    doc="The time this direct message was "
@@ -890,6 +1262,7 @@ class Api(object):
 
     There are many other methods, including:
 
+      >>> api.PostUpdates(status)
       >>> api.PostDirectMessage(user, text)
       >>> api.GetUser(user)
       >>> api.GetReplies()
@@ -905,6 +1278,7 @@ class Api(object):
       >>> api.DestroyDirectMessage(id)
       >>> api.DestroyFriendship(user)
       >>> api.CreateFriendship(user)
+      >>> api.GetUserByEmail(email)
   '''
 
   DEFAULT_CACHE_TIMEOUT = 60 # cache for 1 minute
@@ -915,7 +1289,8 @@ class Api(object):
                username=None,
                password=None,
                input_encoding=None,
-               request_headers=None):
+               request_headers=None,
+               cache=DEFAULT_CACHE):
     '''Instantiate a new twitter.Api object.
 
     Args:
@@ -923,8 +1298,11 @@ class Api(object):
       password: The password for the twitter account. [optional]
       input_encoding: The encoding used to encode input strings. [optional]
       request_header: A dictionary of additional HTTP request headers. [optional]
+      cache: 
+          The cache instance to use. Defaults to DEFAULT_CACHE. Use
+          None to disable caching. [optional]
     '''
-    self._cache = _FileCache()
+    self.SetCache(cache)
     self._urllib = urllib2
     self._cache_timeout = Api.DEFAULT_CACHE_TIMEOUT
     self._InitializeRequestHeaders(request_headers)
@@ -950,9 +1328,14 @@ class Api(object):
     url = 'http://twitter.com/statuses/public_timeline.json'
     json = self._FetchUrl(url,  parameters=parameters)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return [Status.NewFromJsonDict(x) for x in data]
 
-  def GetFriendsTimeline(self, user=None, since=None):
+  def GetFriendsTimeline(self,
+                         user=None,
+                         count=None,
+                         since=None, 
+                         since_id=None):
     '''Fetch the sequence of twitter.Status messages for a user's friends
 
     The twitter.Api instance must be authenticated if the user is private.
@@ -961,62 +1344,124 @@ class Api(object):
       user:
         Specifies the ID or screen name of the user for whom to return
         the friends_timeline.  If unspecified, the username and password
-        must be set in the twitter.Api instance.  [optional]
+        must be set in the twitter.Api instance.  [Optional]
+      count: 
+        Specifies the number of statuses to retrieve. May not be
+        greater than 200. [Optional]
       since:
         Narrows the returned results to just those statuses created
-        after the specified HTTP-formatted date. [optional]
+        after the specified HTTP-formatted date. [Optional]
+      since_id:
+        Returns only public statuses with an ID greater than (that is,
+        more recent than) the specified ID. [Optional]
 
     Returns:
       A sequence of twitter.Status instances, one for each message
     '''
+    if not user and not self._username:
+      raise TwitterError("User must be specified if API is not authenticated.")
     if user:
       url = 'http://twitter.com/statuses/friends_timeline/%s.json' % user
-    elif not user and not self._username:
-      raise TwitterError("User must be specified if API is not authenticated.")
     else:
       url = 'http://twitter.com/statuses/friends_timeline.json'
     parameters = {}
+    if count is not None:
+      try:
+        if int(count) > 200:
+          raise TwitterError("'count' may not be greater than 200")
+      except ValueError:
+        raise TwitterError("'count' must be an integer")
+      parameters['count'] = count
     if since:
       parameters['since'] = since
+    if since_id:
+      parameters['since_id'] = since_id
     json = self._FetchUrl(url, parameters=parameters)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return [Status.NewFromJsonDict(x) for x in data]
 
-  def GetUserTimeline(self, user=None, count=None, since=None):
-    '''Fetch the sequence of public twitter.Status messages for a single user.
+  def GetUserTimeline(self,
+                      id=None,
+                      user_id=None,
+                      screen_name=None,
+                      since_id=None,
+                      max_id=None,
+                      count=None,
+                      page=None):
+    '''Fetch the sequence of public Status messages for a single user.
 
     The twitter.Api instance must be authenticated if the user is private.
 
     Args:
-      user:
-        either the username (short_name) or id of the user to retrieve.  If
-        not specified, then the current authenticated user is used. [optional]
-      count: the number of status messages to retrieve [optional]
-      since:
-        Narrows the returned results to just those statuses created
-        after the specified HTTP-formatted date. [optional]
+      id:
+        Specifies the ID or screen name of the user for whom to return
+        the user_timeline. [optional]
+      user_id:
+        Specfies the ID of the user for whom to return the
+        user_timeline. Helpful for disambiguating when a valid user ID
+        is also a valid screen name. [optional]
+      screen_name:
+        Specfies the screen name of the user for whom to return the
+        user_timeline. Helpful for disambiguating when a valid screen
+        name is also a user ID. [optional]
+      since_id:
+        Returns only public statuses with an ID greater than (that is,
+        more recent than) the specified ID. [optional]
+      max_id:
+        Returns only statuses with an ID less than (that is, older
+        than) or equal to the specified ID. [optional]
+      count:
+        Specifies the number of statuses to retrieve. May not be
+        greater than 200.  [optional]
+      page:
+         Specifies the page of results to retrieve. Note: there are
+         pagination limits. [optional]
 
     Returns:
-      A sequence of twitter.Status instances, one for each message up to count
+      A sequence of Status instances, one for each message up to count
     '''
-    try:
-      if count:
-        int(count)
-    except:
-      raise TwitterError("Count must be an integer")
     parameters = {}
-    if count:
-      parameters['count'] = count
-    if since:
-      parameters['since'] = since
-    if user:
-      url = 'http://twitter.com/statuses/user_timeline/%s.json' % user
-    elif not user and not self._username:
+
+    if id:
+      url = 'http://twitter.com/statuses/user_timeline/%s.json' % id
+    elif user_id:
+      url = 'http://twitter.com/statuses/user_timeline.json?user_id=%d' % user_id
+    elif screen_name:
+      url = ('http://twitter.com/statuses/user_timeline.json?screen_name=%s' %
+             screen_name)
+    elif not self._username:
       raise TwitterError("User must be specified if API is not authenticated.")
     else:
       url = 'http://twitter.com/statuses/user_timeline.json'
+
+    if since_id:
+      try:
+        parameters['since_id'] = long(since_id)
+      except:
+        raise TwitterError("since_id must be an integer")
+
+    if max_id:
+      try:
+        parameters['max_id'] = long(max_id)
+      except:
+        raise TwitterError("max_id must be an integer")
+
+    if count:
+      try:
+        parameters['count'] = int(count)
+      except:
+        raise TwitterError("count must be an integer")
+
+    if page:
+      try:
+        parameters['page'] = int(page)
+      except:
+        raise TwitterError("page must be an integer")
+
     json = self._FetchUrl(url, parameters=parameters)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return [Status.NewFromJsonDict(x) for x in data]
 
   def GetStatus(self, id):
@@ -1032,12 +1477,13 @@ class Api(object):
     '''
     try:
       if id:
-        int(id)
+        long(id)
     except:
-      raise TwitterError("id must be an integer")
+      raise TwitterError("id must be an long integer")
     url = 'http://twitter.com/statuses/show/%s.json' % id
     json = self._FetchUrl(url)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return Status.NewFromJsonDict(data)
 
   def DestroyStatus(self, id):
@@ -1054,39 +1500,94 @@ class Api(object):
     '''
     try:
       if id:
-        int(id)
+        long(id)
     except:
       raise TwitterError("id must be an integer")
     url = 'http://twitter.com/statuses/destroy/%s.json' % id
     json = self._FetchUrl(url, post_data={})
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return Status.NewFromJsonDict(data)
 
-  def PostUpdate(self, text):
+  def PostUpdate(self, status, in_reply_to_status_id=None):
     '''Post a twitter status message from the authenticated user.
 
     The twitter.Api instance must be authenticated.
 
     Args:
-      text: The message text to be posted.  Must be less than 140 characters.
-
+      status:
+        The message text to be posted.  Must be less than or equal to
+        140 characters.
+      in_reply_to_status_id:
+        The ID of an existing status that the status to be posted is
+        in reply to.  This implicitly sets the in_reply_to_user_id
+        attribute of the resulting status to the user ID of the
+        message being replied to.  Invalid/missing status IDs will be
+        ignored. [Optional]
     Returns:
-      A twitter.Status instance representing the message posted
+      A twitter.Status instance representing the message posted.
     '''
     if not self._username:
       raise TwitterError("The twitter.Api instance must be authenticated.")
-    if len(text) > 140:
-      raise TwitterError("Text must be less than or equal to 140 characters.")
+
     url = 'http://twitter.com/statuses/update.json'
-    data = {'status': text}
+
+    if len(status) > CHARACTER_LIMIT:
+      raise TwitterError("Text must be less than or equal to %d characters. "
+                         "Consider using PostUpdates." % CHARACTER_LIMIT)
+
+    data = {'status': status}
+    if in_reply_to_status_id:
+      data['in_reply_to_status_id'] = in_reply_to_status_id
     json = self._FetchUrl(url, post_data=data)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return Status.NewFromJsonDict(data)
 
-  def GetReplies(self):
+  def PostUpdates(self, status, continuation=None, **kwargs):
+    '''Post one or more twitter status messages from the authenticated user.
+
+    Unlike api.PostUpdate, this method will post multiple status updates
+    if the message is longer than 140 characters.
+
+    The twitter.Api instance must be authenticated.
+
+    Args:
+      status:
+        The message text to be posted.  May be longer than 140 characters.
+      continuation:
+        The character string, if any, to be appended to all but the
+        last message.  Note that Twitter strips trailing '...' strings
+        from messages.  Consider using the unicode \u2026 character
+        (horizontal ellipsis) instead. [Defaults to None]
+      **kwargs:
+        See api.PostUpdate for a list of accepted parameters.
+    Returns:
+      A of list twitter.Status instance representing the messages posted.
+    '''
+    results = list()
+    if continuation is None:
+      continuation = ''
+    line_length = CHARACTER_LIMIT - len(continuation)
+    lines = textwrap.wrap(status, line_length)
+    for line in lines[0:-1]:
+      results.append(self.PostUpdate(line + continuation, **kwargs))
+    results.append(self.PostUpdate(lines[-1], **kwargs))
+    return results
+
+  def GetReplies(self, since=None, since_id=None, page=None): 
     '''Get a sequence of status messages representing the 20 most recent
     replies (status updates prefixed with @username) to the authenticating
     user.
+
+    Args:
+      page: 
+      since:
+        Narrows the returned results to just those statuses created
+        after the specified HTTP-formatted date. [optional]
+      since_id:
+        Returns only public statuses with an ID greater than (that is,
+        more recent than) the specified ID. [Optional]
 
     Returns:
       A sequence of twitter.Status instances, one for each reply to the user.
@@ -1094,11 +1595,19 @@ class Api(object):
     url = 'http://twitter.com/statuses/replies.json'
     if not self._username:
       raise TwitterError("The twitter.Api instance must be authenticated.")
-    json = self._FetchUrl(url)
+    parameters = {}
+    if since:
+      parameters['since'] = since
+    if since_id:
+      parameters['since_id'] = since_id
+    if page:
+      parameters['page'] = page
+    json = self._FetchUrl(url, parameters=parameters)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return [Status.NewFromJsonDict(x) for x in data]
 
-  def GetFriends(self, user=None):
+  def GetFriends(self, user=None, page=None):
     '''Fetch the sequence of twitter.User instances, one for each friend.
 
     Args:
@@ -1110,17 +1619,21 @@ class Api(object):
     Returns:
       A sequence of twitter.User instances, one for each friend
     '''
-    if not self._username:
+    if not user and not self._username:
       raise TwitterError("twitter.Api instance must be authenticated")
     if user:
-      url = 'http://twitter.com/statuses/friends/%s.json' % user
+      url = 'http://twitter.com/statuses/friends/%s.json' % user 
     else:
       url = 'http://twitter.com/statuses/friends.json'
-    json = self._FetchUrl(url)
+    parameters = {}
+    if page:
+      parameters['page'] = page
+    json = self._FetchUrl(url, parameters=parameters)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return [User.NewFromJsonDict(x) for x in data]
 
-  def GetFollowers(self):
+  def GetFollowers(self, page=None):
     '''Fetch the sequence of twitter.User instances, one for each follower
 
     The twitter.Api instance must be authenticated.
@@ -1131,8 +1644,12 @@ class Api(object):
     if not self._username:
       raise TwitterError("twitter.Api instance must be authenticated")
     url = 'http://twitter.com/statuses/followers.json'
-    json = self._FetchUrl(url)
+    parameters = {}
+    if page:
+      parameters['page'] = page
+    json = self._FetchUrl(url, parameters=parameters)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return [User.NewFromJsonDict(x) for x in data]
 
   def GetFeatured(self):
@@ -1146,6 +1663,7 @@ class Api(object):
     url = 'http://twitter.com/statuses/featured.json'
     json = self._FetchUrl(url)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return [User.NewFromJsonDict(x) for x in data]
 
   def GetUser(self, user):
@@ -1162,9 +1680,10 @@ class Api(object):
     url = 'http://twitter.com/users/show/%s.json' % user
     json = self._FetchUrl(url)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return User.NewFromJsonDict(data)
 
-  def GetDirectMessages(self, since=None):
+  def GetDirectMessages(self, since=None, since_id=None, page=None):
     '''Returns a list of the direct messages sent to the authenticating user.
 
     The twitter.Api instance must be authenticated.
@@ -1173,6 +1692,9 @@ class Api(object):
       since:
         Narrows the returned results to just those statuses created
         after the specified HTTP-formatted date. [optional]
+      since_id:
+        Returns only public statuses with an ID greater than (that is,
+        more recent than) the specified ID. [Optional]
 
     Returns:
       A sequence of twitter.DirectMessage instances
@@ -1183,8 +1705,13 @@ class Api(object):
     parameters = {}
     if since:
       parameters['since'] = since
+    if since_id:
+      parameters['since_id'] = since_id
+    if page:
+      parameters['page'] = page 
     json = self._FetchUrl(url, parameters=parameters)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return [DirectMessage.NewFromJsonDict(x) for x in data]
 
   def PostDirectMessage(self, user, text):
@@ -1205,6 +1732,7 @@ class Api(object):
     data = {'text': text, 'user': user}
     json = self._FetchUrl(url, post_data=data)
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return DirectMessage.NewFromJsonDict(data)
 
   def DestroyDirectMessage(self, id):
@@ -1223,6 +1751,7 @@ class Api(object):
     url = 'http://twitter.com/direct_messages/destroy/%s.json' % id
     json = self._FetchUrl(url, post_data={})
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return DirectMessage.NewFromJsonDict(data)
 
   def CreateFriendship(self, user):
@@ -1238,6 +1767,7 @@ class Api(object):
     url = 'http://twitter.com/friendships/create/%s.json' % user
     json = self._FetchUrl(url, post_data={})
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return User.NewFromJsonDict(data)
 
   def DestroyFriendship(self, user):
@@ -1253,6 +1783,7 @@ class Api(object):
     url = 'http://twitter.com/friendships/destroy/%s.json' % user
     json = self._FetchUrl(url, post_data={})
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return User.NewFromJsonDict(data)
 
   def CreateFavorite(self, status):
@@ -1269,6 +1800,7 @@ class Api(object):
     url = 'http://twitter.com/favorites/create/%s.json' % status.id
     json = self._FetchUrl(url, post_data={})
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return Status.NewFromJsonDict(data)
 
   def DestroyFavorite(self, status):
@@ -1285,7 +1817,43 @@ class Api(object):
     url = 'http://twitter.com/favorites/destroy/%s.json' % status.id
     json = self._FetchUrl(url, post_data={})
     data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
     return Status.NewFromJsonDict(data)
+
+  def GetUserByEmail(self, email):
+    '''Returns a single user by email address.
+
+    Args:
+      email: The email of the user to retrieve.
+    Returns:
+      A twitter.User instance representing that user
+    '''
+    url = 'http://twitter.com/users/show.json?email=%s' % email
+    json = self._FetchUrl(url)
+    data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
+    return User.NewFromJsonDict(data)
+
+  def VerifyCredentials(self):
+    '''Returns a twitter.User instance if the authenticating user is valid.
+
+    Returns: 
+      A twitter.User instance representing that user if the
+      credentials are valid, None otherwise.
+    '''
+    if not self._username:
+      raise TwitterError("Api instance must first be given user credentials.")
+    url = 'http://twitter.com/account/verify_credentials.json'
+    try:
+      json = self._FetchUrl(url, no_cache=True)
+    except urllib2.HTTPError, http_error:
+      if http_error.code == httplib.UNAUTHORIZED:
+        return None
+      else:
+        raise http_error
+    data = simplejson.loads(json)
+    self._CheckForTwitterError(data)
+    return User.NewFromJsonDict(data)
 
   def SetCredentials(self, username, password):
     '''Set the username and password for this instance
@@ -1307,9 +1875,12 @@ class Api(object):
     '''Override the default cache.  Set to None to prevent caching.
 
     Args:
-      cache: an instance that supports the same API as the  twitter._FileCache
+      cache: an instance that supports the same API as the twitter._FileCache
     '''
-    self._cache = cache
+    if cache == DEFAULT_CACHE:
+      self._cache = _FileCache()
+    else:
+      self._cache = cache
 
   def SetUrllib(self, urllib):
     '''Override the default urllib implementation.
@@ -1399,7 +1970,7 @@ class Api(object):
 
   def _InitializeUserAgent(self):
     user_agent = 'Python-urllib/%s (python-twitter/%s)' % \
-                 (self._urllib.__version__, twitter.__version__)
+                 (self._urllib.__version__, __version__)
     self.SetUserAgent(user_agent)
 
   def _InitializeDefaultParameters(self):
@@ -1467,6 +2038,19 @@ class Api(object):
     else:
       return urllib.urlencode(dict([(k, self._Encode(v)) for k, v in post_data.items()]))
 
+  def _CheckForTwitterError(self, data):
+    """Raises a TwitterError if twitter returns an error message.
+
+    Args:
+      data: A python dict created from the Twitter json response
+    Raises:
+      TwitterError wrapping the twitter error message if one exists.
+    """
+    # Twitter errors are relatively unlikely, so it is faster
+    # to check first, rather than try and catch the exception
+    if 'error' in data:
+      raise TwitterError(data['error'])
+
   def _FetchUrl(self,
                 url,
                 post_data=None,
@@ -1476,11 +2060,11 @@ class Api(object):
 
     Args:
       url: The URL to retrieve
-      data: A dict of (str, unicode) key value pairs.  If set, POST will be used.
-      parameters: A dict of key/value pairs that should added to
-                  the query string. [OPTIONAL]
-      username: A HTTP Basic Auth username for this request
-      username: A HTTP Basic Auth password for this request
+      post_data: 
+        A dict of (str, unicode) key/value pairs.  If set, POST will be used.
+      parameters:
+        A dict whose key/value pairs should encoded and added 
+        to the query string. [OPTIONAL]
       no_cache: If true, overrides the cache on the current request
 
     Returns:
@@ -1504,6 +2088,7 @@ class Api(object):
     # Open and return the URL immediately if we're not going to cache
     if encoded_post_data or no_cache or not self._cache or not self._cache_timeout:
       url_data = opener.open(url, encoded_post_data).read()
+      opener.close()
     else:
       # Unique keys are a combination of the url and the username
       if self._username:
@@ -1517,12 +2102,14 @@ class Api(object):
       # If the cached version is outdated then fetch another and store it
       if not last_cached or time.time() >= last_cached + self._cache_timeout:
         url_data = opener.open(url, encoded_post_data).read()
+        opener.close()
         self._cache.Set(key, url_data)
       else:
         url_data = self._cache.Get(key)
 
     # Always return the latest version
     return url_data
+
 
 class _FileCacheError(Exception):
   '''Base exception class for FileCache related errors'''
@@ -1602,7 +2189,11 @@ class _FileCache(object):
     self._root_directory = root_directory
 
   def _GetPath(self,key):
-    hashed_key = md5.new(key).hexdigest()
+    try:
+        hashed_key = md5(key).hexdigest()
+    except TypeError:
+        hashed_key = md5.new(key).hexdigest()
+        
     return os.path.join(self._root_directory,
                         self._GetPrefix(hashed_key),
                         hashed_key)
