@@ -1,12 +1,19 @@
 #!/usr/bin/python
+# coding=utf-8
 
 import re
 import tinyurl
+import bitly
+
+USE_BITLY = True
 
 def httpurl_simplify(url, simplify=True):
     http_url = re.match('(^http:\/\/[^ ]*)', url).group(1)
     if simplify == True:
-        http_url = tinyurl.tiny_url(http_url) 
+        if USE_BITLY:
+            http_url = bitly.shorten(http_url).encode('utf-8')
+        else:
+            http_url = tinyurl.tiny_url(http_url) 
 
     desc_match = re.match('^http:\/\/[^ ]* (.*)', url)
     if desc_match == None:
