@@ -30,10 +30,11 @@ def shorten(longUrl, **kwargs):
   result = simplejson.load(urllib.urlopen(url))
   if 'ERROR' in result:
     raise BitlyAPIError, result['errorMessage']
-  if result['results'][longUrl]['shortKeywordUrl'] == "":
-    return result['results'][longUrl]['shortUrl']
-  else:
-    return result['results'][longUrl]['shortKeywordUrl']
+  if result.has_key('results'):
+    if result['results'][longUrl]['shortKeywordUrl'] == "":
+      return result['results'][longUrl]['shortUrl']
+    else:
+      return result['results'][longUrl]['shortKeywordUrl']
 
 def expand(**kwargs):
   """
