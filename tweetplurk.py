@@ -30,6 +30,8 @@ Qualifiers:
         help="testing mode")
     parser.add_option('-b', action="store_true", dest="birth", default=False, \
         help="post birth message")
+    parser.add_option('-p', action="store_true", dest="plurkish", default=False, \
+        help="post plurkish message")
     options, remainder = parser.parse_args()
 
     n_argv = len(sys.argv)
@@ -57,7 +59,7 @@ Qualifiers:
     else:
         message_general = message_plurk = message
 
-    if qualifier_idx != 0:
+    if options.plurkish == True and qualifier_idx != 0:
         message_general = plurkish_message(message_general, qualifier_idx)
 
     # Testing mode
