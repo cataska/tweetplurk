@@ -9,3 +9,7 @@ password =
 [jaiku]
 username =
 apikey =
+
+[bitly]
+login =
+apikey =

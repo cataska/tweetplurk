@@ -1,7 +1,13 @@
 import simplejson, urllib, string
+from ConfigParser import ConfigParser
 
-API_KEY = ''
-API_LOGIN = ''
+rc_name = 'tweetplurk.rc'
+
+config = ConfigParser()
+config.read(rc_name)
+
+API_KEY = config.get('bitly', 'apikey')
+API_LOGIN = config.get('bitly', 'login')
 API_VERSION = '2.0.1'
 API_BASE = 'http://api.bit.ly'
 
