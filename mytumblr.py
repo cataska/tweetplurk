@@ -10,7 +10,7 @@ def send_message(message):
     email = settings.get('tumblr', 'email')
     password = settings.get('tumblr', 'password')
     api = Api(blog, email, password)
-    post = api.write_regular(None, message)
+    post = api.write_regular(title=None, body=message)
     print post['url']
 
 def print_usage_and_exit():
