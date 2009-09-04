@@ -13,13 +13,17 @@ def send_message(message):
     fb.secret = settings.get('facebook', 'secret')
     fb.status.set([message])
 
-def main():
-	nargvs = len(sys.argv)
-	if nargvs < 2:
-		print_usage_and_exit()
+def print_usage_and_exit():
+    print "usage: myfacebook message"
+    sys.exit(0)
 
-	message = sys.argv[1]
-	send_message(message)
+def main():
+    nargvs = len(sys.argv)
+    if nargvs < 2:
+        print_usage_and_exit()
+
+    message = sys.argv[1]
+    send_message(message)
 
 if __name__ == '__main__':
-	main()
+    main()
