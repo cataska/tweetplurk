@@ -11,6 +11,8 @@ API_LOGIN = config.get('bitly', 'login')
 API_VERSION = '2.0.1'
 API_BASE = 'http://api.bit.ly'
 
+MAX_LEN = len('http://bit.ly/12345')
+
 class BitlyAPIError(Exception):
   pass
 
@@ -25,6 +27,9 @@ def shorten(longUrl, **kwargs):
     keyword (optional): preferred keyword
                         ie: shorten('http://cnn.com', keyword='cnn')
   """
+  if MAX_LEN >= len(longUrl):
+    return longUrl
+  
   kwargs.update({
     'version': API_VERSION,
     'format': 'json',
