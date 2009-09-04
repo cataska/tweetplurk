@@ -2,19 +2,15 @@
 # coding=utf-8
 
 import sys
-from ConfigParser import ConfigParser
 import facebook
-
-rc_name = "tweetplurk.rc"
+import settings
 
 def send_message(message):
-    config = ConfigParser()
-    config.read(rc_name)
-    apikey = config.get('facebook', 'apikey')
-    secretkey = config.get('facebook', 'sessionkey')
+    apikey = settings.get('facebook', 'apikey')
+    secretkey = settings.get('facebook', 'sessionkey')
     fb = facebook.Facebook(apikey, secretkey)
-    fb.session_key = config.get('facebook', 'sessionkey')
-    fb.secret = config.get('facebook', 'secret')
+    fb.session_key = settings.get('facebook', 'sessionkey')
+    fb.secret = settings.get('facebook', 'secret')
     fb.status.set([message])
 
 def main():

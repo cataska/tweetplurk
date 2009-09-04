@@ -2,16 +2,12 @@
 # coding=utf-8
 
 import sys
-from ConfigParser import ConfigParser
 import jaiku
-
-rc_name = 'tweetplurk.rc'
+import settings
 
 def send_message(message):
-	config = ConfigParser()
-	config.read(rc_name)
-	username = config.get('jaiku', 'username')
-	apikey = config.get('jaiku', 'apikey')
+	username = settings.get('jaiku', 'username')
+	apikey = settings.get('jaiku', 'apikey')
 
 	japi = jaiku.Api(username=username, api_key=apikey)
 	print japi.PostPresence(message)

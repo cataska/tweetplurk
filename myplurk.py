@@ -2,10 +2,8 @@
 # coding=utf-8
 
 import sys
-from ConfigParser import ConfigParser
 import plurkapi
-
-rc_name = 'tweetplurk.rc'
+import settings
 
 def print_qualifiers():
     i = 0
@@ -23,10 +21,8 @@ def get_qualifiers_string():
     return str
 
 def send_message(message, qualifier_idx=0):
-    config = ConfigParser()
-    config.read(rc_name)
-    pnickname = config.get('plurk', 'username')
-    ppassword = config.get('plurk', 'password')
+    pnickname = settings.get('plurk', 'username')
+    ppassword = settings.get('plurk', 'password')
 
     qualifier = 'says'
     if qualifier_idx < len(plurkapi.PlurkAPI._qualifiers['en']):

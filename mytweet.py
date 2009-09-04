@@ -2,16 +2,12 @@
 # coding=utf-8 
 
 import sys
-from ConfigParser import ConfigParser
 import twitter
-
-rc_name = 'tweetplurk.rc'
+import settings
 
 def send_message(message):
-	config = ConfigParser()
-	config.read(rc_name)
-	username = config.get('tweet', 'username')
-	password = config.get('tweet', 'password')
+	username = settings.get('tweet', 'username')
+	password = settings.get('tweet', 'password')
 
 	api = twitter.Api(username=username, password=password, input_encoding='utf-8')
 	status = api.PostUpdate(message)
