@@ -70,29 +70,18 @@ Qualifiers:
         print "Plurk:", message_plurk, qualifier_idx
         sys.exit(1)
 
-    try:
-        myplurk.send_message(message_plurk, qualifier_idx)
-    except Exception:
-        print "plurk: Failed to post message"
+    clients = [
+        myplurk, mytweet, myjaiku,
+        myfacebook, mytumblr
+    ]
 
-    try:
-        mytweet.send_message(message_general)
-    except Exception:
-        print "tweet: Failed to post message"
-
-    try:
-        myjaiku.send_message(message_general)
-    except Exception:
-        print "jaiku: Failed to post message"
-
-    try:
-        myfacebook.send_message(message_general)
-    except Exception:
-        print "facebook: Failed to post message"
-
-    try:
-        mytumblr.send_message(message_general)
-    except Exception:
-        print "tumblr: Failed to post message"
+    for client in clients:
+        try:
+            if client.__name__ == 'myplurk':
+                client.send_message(message_plurk, qualifier_idx)
+            else:
+                client.send_message(message_general)
+        except Exception:
+            print "%s: Failed to post message" % client.__name__[2:]
 
 main()
