@@ -220,7 +220,10 @@ class Api:
 			ret = urlopen(req)
 			return self.read(id=ret.read())
 		except HTTPError, e:
-			raise TumblrError(e.read()) 
+			if 201 == e.code:
+				return self.read(id=e.read())
+			else:
+				raise TumblrError(e.read())
 
 	def read(self, id=None, start=0,max=2**31-1,type=None): 
 		if id:
