@@ -8,6 +8,7 @@ import myplurk
 import mytweet
 import myjaiku
 import myfacebook
+import mytumblr
 import myurl
 import birth
 
@@ -88,5 +89,10 @@ Qualifiers:
         myfacebook.send_message(message_general)
     except Exception:
         print "facebook: Failed to post message"
+
+    try:
+        mytumblr.send_message(message_general)
+    except Exception:
+        print "tumblr: Failed to post message"
 
 main()

@@ -19,3 +19,8 @@ apikey =
 secretkey =
 sessionkey =
 secret =
+
+[tumblr]
+blog =
+email =
+password =
