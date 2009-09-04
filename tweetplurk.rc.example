@@ -13,3 +13,9 @@ apikey =
 [bitly]
 login =
 apikey =
+
+[facebook]
+apikey =
+secretkey =
+sessionkey =
+secret =

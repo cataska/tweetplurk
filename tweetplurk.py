@@ -7,6 +7,7 @@ import optparse
 import myplurk
 import mytweet
 import myjaiku
+import myfacebook
 import myurl
 import birth
 
@@ -82,5 +83,10 @@ Qualifiers:
         myjaiku.send_message(message_general)
     except Exception:
         print "jaiku: Failed to post message"
+
+    try:
+        myfacebook.send_message(message_general)
+    except Exception:
+        print "facebook: Failed to post message"
 
 main()
