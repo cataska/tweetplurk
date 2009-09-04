@@ -5,6 +5,8 @@ import sys
 from ConfigParser import ConfigParser
 import facebook
 
+rc_name = "tweetplurk.rc"
+
 def send_message(message):
     config = ConfigParser()
     config.read(rc_name)
