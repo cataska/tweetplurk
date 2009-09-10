@@ -6,12 +6,15 @@ import tinyurl
 import bitly
 
 USE_BITLY = True
+SHORTER = True
 
 def httpurl_simplify(url, simplify=True):
     http_url = re.match('(^http:\/\/[^ ]*)', url).group(1)
     if simplify == True:
         if USE_BITLY:
             http_url = bitly.shorten(http_url).encode('utf-8')
+            if SHORTER == True:
+                http_url = http_url.replace("bit.ly", "j.mp")
         else:
             http_url = tinyurl.tiny_url(http_url) 
 
