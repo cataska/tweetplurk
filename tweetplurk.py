@@ -3,6 +3,7 @@
 
 import sys
 import optparse
+from ConfigParser import NoOptionError
 
 import myplurk
 import mytweet
@@ -11,6 +12,7 @@ import myfacebook
 import mytumblr
 import myurl
 import birth
+import settings
 
 _qualifiers = { 'zh-TW': ('', '愛', '喜歡', '推', '給', '討厭', '想要', '希望',
                           '需要', '打算', '希望', '問', '已經', '曾經', '好奇', '覺得', '想', '說', '正在')
@@ -76,12 +78,22 @@ Qualifiers:
     ]
 
     for client in clients:
+        disable = False
+        client_name = client.__name__[2:]
         try:
-            if client.__name__ == 'myplurk':
-                client.send_message(message_plurk, qualifier_idx)
-            else:
-                client.send_message(message_general)
+            option = settings.get(client_name, 'disable').lower()
+            if option == 'true' or option == 'yes':
+                disable = True
+        except NoOptionError:
+            pass
+
+        try:
+            if disable == False:
+                if client.__name__ == 'myplurk':
+                    client.send_message(message_plurk, qualifier_idx)
+                else:
+                    client.send_message(message_general)
         except Exception:
-            print "%s: Failed to post message" % client.__name__[2:]
+            print "%s: Failed to post message" % client_name
 
 main()
