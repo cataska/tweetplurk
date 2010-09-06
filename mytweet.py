@@ -2,19 +2,37 @@
 # coding=utf-8 
 
 import sys
-import twitter
+import tweepy
 import settings
+import ConfigParser
 from urllib2 import HTTPError
 
 def send_message(message):
     username = settings.get('tweet', 'username')
     password = settings.get('tweet', 'password')
+    appkey = settings.get('tweet', 'appkey')
+    appsecret = settings.get('tweet', 'appsecret')
+    try:
+        userkey = settings.get('tweet', 'userkey')
+        usersecret = settings.get('tweet', 'usersecret')
+    except ConfigParser.NoOptionError:
+        userkey = ''
+        usersecret = ''
 
-    api = twitter.Api(username=username, password=password, input_encoding='utf-8')
+    auth = tweepy.OAuthHandler(appkey, appsecret)
+    if userkey == '':
+        print 'Authorization URL: ' + auth.get_authorization_url()
+        verifier = raw_input('Verifier:')
+        auth.get_access_token(verifier)
+        print "userkey = " + auth.access_token.key
+        print "usersecret = " + auth.access_token.secret
+    else:
+        auth.set_access_token(userkey, usersecret)
+    api = tweepy.API(auth)
     count = 5
     while count > 0:
         try:
-            status = api.PostUpdate(message)
+            status = api.update_status(message)
             break
         except HTTPError, e:
             if 408 == e.code:
